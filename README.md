@@ -61,4 +61,6 @@ It uses a symlink on macOS/Linux and a directory junction on Windows (auto-detec
 
 Before deploying a skill, do its one-time setup from its own `README.md` (`cp config.example.json config.json`, fill it in; install `uv` if the skill ships Python — its deps are isolated, not global). If a runtime dir already has a real (drifted) copy of a skill, `deploy.py` asks before replacing it with a link.
 
+**Skill list in your library's README.** Put `<!-- skills:start -->` and `<!-- skills:end -->` on their own lines in the library's `README.md`, and every `deploy.py` run rebuilds the list between them from the skill folders: one line per skill, taken from the first paragraph of the skill's `README.md` (or the first sentence of its `description`). Don't edit the list by hand. A README without the markers is left alone.
+
 **On a new machine:** clone this repo (and your private library), `cp deploy.example.json deploy.json` and set the paths, run `python3 deploy.py`, then fill in each skill's `config.json`.

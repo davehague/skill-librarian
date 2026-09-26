@@ -16,6 +16,13 @@ It deploys skills from two places:
     python3 deploy.py --dry-run    # show what it would do, change nothing
     python3 deploy.py --skill NAME # just one skill (used by skill-librarian)
 
+Every run also refreshes each library's README skill list, if that README has
+the markers below. The list is rebuilt from the skill folders, so it can't
+drift; a README without the markers is left alone.
+
+    <!-- skills:start -->
+    <!-- skills:end -->
+
 deploy.json (git-ignored; see deploy.example.json) — absolute paths only:
 
     {
@@ -30,6 +37,7 @@ Requires Python 3. Standard library only.
 import argparse
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -139,6 +147,60 @@ def short(path):
     return path.replace(os.path.expanduser("~"), "~")
 
 
+CATALOG = re.compile(r"(<!-- skills:start -->\n).*?(<!-- skills:end -->)", re.S)
+
+
+def skill_summary(d):
+    """One line for the catalog: the README's first paragraph, else the
+    first sentence of the SKILL.md frontmatter description."""
+    readme = os.path.join(d, "README.md")
+    if os.path.isfile(readme):
+        for para in open(readme, encoding="utf-8").read().split("\n\n"):
+            para = " ".join(para.split())
+            if para and not para.startswith(("#", "```", "<!--")):
+                return para
+    text = open(os.path.join(d, "SKILL.md"), encoding="utf-8").read()
+    fm = re.match(r"---\n(.*?)\n---", text, re.S)
+    lines = fm.group(1).splitlines() if fm else []
+    for i, line in enumerate(lines):
+        if line.startswith("description:"):
+            val = line[len("description:"):].strip()
+            if val in ("", ">", "|", ">-", "|-"):     # folded / block scalar
+                rest = []
+                for nxt in lines[i + 1:]:
+                    if nxt and not nxt[0].isspace():
+                        break
+                    rest.append(nxt.strip())
+                val = " ".join(rest)
+            if len(val) > 1 and val[0] == val[-1] and val[0] in "'\"":
+                val = val[1:-1]            # YAML-quoted scalar
+            return re.split(r"(?<=[.!?])\s", val, maxsplit=1)[0]
+    return ""
+
+
+def update_catalogs(dry_run=False):
+    """Rebuild the marked skill list in each library's README.md."""
+    for root in library_roots():
+        readme = os.path.join(root, "README.md")
+        if not os.path.isfile(readme):
+            continue
+        text = open(readme, encoding="utf-8").read()
+        if not CATALOG.search(text):
+            continue
+        names = sorted(n for n in os.listdir(root)
+                       if not n.startswith(".")
+                       and os.path.isfile(os.path.join(root, n, "SKILL.md")))
+        items = "".join(f"- `{n}` — {skill_summary(os.path.join(root, n))}\n" for n in names)
+        new = CATALOG.sub(lambda m: m.group(1) + items + m.group(2), text)
+        if new == text:
+            continue
+        if dry_run:
+            print(f"  CATALOG   {short(readme)}  (would refresh {len(names)} skills)")
+        else:
+            open(readme, "w", encoding="utf-8").write(new)
+            print(f"  catalog   {short(readme)}  ({len(names)} skills)")
+
+
 def deploy(dry_run=False, only=None):
     skills = discover_skills()
     if only:
@@ -204,6 +266,7 @@ def deploy(dry_run=False, only=None):
                 print(f"  linked    {label}")
             counts["linked"] += 1
 
+    update_catalogs(dry_run)
     print()
     print("Summary: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
 
