@@ -42,7 +42,7 @@ Work one skill at a time. Create a TodoWrite list with the seven phases below so
 
 ```
 Phase 0  Locate & guard       → find the skill; bail if it already exists in the library
-Phase 1  Audit dependencies   → classify everything the skill touches
+Phase 1  Audit dependencies   → classify everything the skill touches; is it a block?
 ─ GATE   Sign off with human  → report findings + plan; get the OK before changing any files
 Phase 2  Migrate              → copy the body, vendor scripts, extract config, relocate state
 Phase 3  Verify               → grep-clean, RUN the scripts, confirm secrets are git-ignored
@@ -68,6 +68,7 @@ Read the `SKILL.md` and list every file in the source folder. Then classify ever
 | **Shared rules/docs from a workspace** (not a skill) | markdown/CSS/prompts the body *reads* that live in another repo or workspace | **Vendor** into `<skill>/references/<source>/` (provenance-named subfolder) |
 | **Dependency on another skill** | "use the X skill", `Skill(...)`, `/some-skill` | **Reference only** — never copy. Note it as a prerequisite in the skill's README. |
 | **User-provided secret** | an API key/token/password the user supplies and pastes in | **Extract** to `config.json` |
+| **Shared provider key** | a provider's API key (OpenAI, Deepgram, Mailjet, Slack, …) that other skills on this machine also use | **Copy** it once to `~/.config/<provider>/credentials.env`; the skill's `config.json` holds that file's path |
 | **Tool-obtained credential** | a token the tool fetches/refreshes itself (login, OAuth, device flow) and writes to disk | **Relocate** to `<state_root>/<name>/` and point the tool there — it's state the tool manages, not user config |
 | **Hardcoded absolute path** | `/Users/...`, a vault path, a fixed data dir | **Extract** to `config.json` (absolute) |
 | **Output / export destination** | where the skill writes the user's data or reports | Expose as a `config.json` key with a portable default; leave the *content* where the user expects it (don't move it into the state dir) |
@@ -94,6 +95,10 @@ When to push, when to leave alone:
 - **Leave interactive, exploratory skills as prose.** If the workflow's value is adapting to what it finds (debugging, research, conversation), compiling removes the point. A 90%-judgment skill gets a "leave as prose" verdict — that is a finding, not a failure.
 - **Never compile the voice.** Prose briefs stay in `SKILL.md` and the runner extracts them at runtime; duplicating prose into code is how the two drift.
 
+#### Phase 1c — Block audit (who calls this skill?)
+
+A **block** is a skill other skills, scripts, jobs or projects call; it gets a fixed `scripts/run.py` contract on top of the usual migration (`references/block-conventions.md`). Find the callers: grep the skill library, the runtime skills dirs, project `AGENTS.md`/`CLAUDE.md` files, and scheduled-job definitions for the skill's name and for paths into its scripts. By the **second-consumer rule**, anything that calls it besides a person, or more than one caller, makes it a block candidate. List each caller with how it calls today (by skill name, by hardcoded script path, by copied code). One person invoking it is an ordinary skill: say so and skip the block rules.
+
 ### Gate — sign off with the human (before touching files)
 
 The audit produces a picture; **don't start changing files until the human has seen it.** This is the cheapest moment to catch a wrong call. Report back concisely, then wait for a go:
@@ -101,6 +106,7 @@ The audit produces a picture; **don't start changing files until the human has s
 - **What you found** — the dependency classification (what gets vendored, what's referenced as a sibling skill, what becomes a `config.json` key, what's state vs. output), and especially the **non-obvious judgment calls**: a shared, read-only datastore → config, not a vendored copy; personal data (a bio, an audience profile) → config, kept out of the committed skill; a whole workspace's shared docs → vendored into `references/<source>/`.
 - **The plan** — the config keys you'll create, the scripts you'll vendor and whether they need `uv`, where state/output will land, what you'll rewrite in the body.
 - **Determinism verdict** (Phase 1b) — the mechanical/judgment ratio and your call: compile the mechanical steps into `scripts/` (say which, and what the one-or-few toolless LLM calls will be), or leave as prose (say why). For a skill that runs unattended, compiling is the default recommendation.
+- **Block verdict** (Phase 1c) — the callers you found and your call: block or ordinary skill. For a block, name the entry point, the env-var prefix, any shared provider key moving to `~/.config/<provider>/`, and whether it needs `--dry-run` (it sends, publishes or deletes).
 - **Name** — now that you understand what the skill actually does, assess its name. **Always show the current name and always make a recommendation** — even when you'd keep it. If the workflow points to something clearer or more accurate, propose it (e.g. `newsletter-setup` → `newsletter-profile-setup`, since it builds a profile, not sending infrastructure); if the current name is already the best fit, recommend keeping it and say why. The user picks; the chosen name becomes the library folder and the deployed skill name — re-check it doesn't collide in the library if you changed it.
 - **Open questions** — only the genuinely ambiguous ones that would change the plan. Don't ask about what you can sensibly default; do ask when the right call depends on how the user works.
 
@@ -167,9 +173,11 @@ Migrate existing token/state by **copy** if the original location is still used 
 
 A skill with no secrets, no hardcoded paths, no scripts, and no state is just `SKILL.md` — a one-file copy. Don't manufacture config files it doesn't need.
 
+**g. If it's a block,** build it to `references/block-conventions.md`: one `scripts/run.py` (recipe 6 in `migration-recipes.md` is the skeleton) with `--help` as the full contract, JSON out, JSON errors, exit 2 for a bad call and 1 for a failed run, a required `--caller`, one call-log line per call honouring `SKILLS_CALL_LOG`, and `<PREFIX>_<KEY>` environment variables. Move anything that needs another skill or judgment into `SKILL.md`. Give the `README.md` its `## Block contract` and `## Consumers` sections, listing every caller found in Phase 1c.
+
 ### Phase 3 — Verify (do not skip)
 
-A migration that *looks* moved but silently broke a path is worse than no migration — it fails when the user is depending on it. Run the same three checks every time, after the copy/edits are done:
+A migration that *looks* moved but silently broke a path is worse than no migration — it fails when the user is depending on it. Run the same three checks every time (four for a block), after the copy/edits are done:
 
 1. **Grep clean.** No leftover source coupling in the migrated `SKILL.md` and scripts:
    ```bash
@@ -188,6 +196,14 @@ A migration that *looks* moved but silently broke a path is worse than no migrat
    git -C <skill_library_path> check-ignore <name>/config.json   # must print the path
    git -C <skill_library_path> status --short <name>/            # config.example.json staged, config.json absent
    ```
+
+4. **Block contract (blocks only).** Run the bundled check with a sample call chosen from the block's `--help` examples. The sample must have no outside effect: a few cents of paid API is fine, anything that sends or publishes gets `--dry-run`.
+   ```bash
+   LIBRARIAN=<the folder holding this skill-librarian SKILL.md>   # not $SKILL_DIR, which step 2 set to the migrated skill
+   uv run "$LIBRARIAN/scripts/check_block.py" <skill_library_path>/<name> --sample '<args from a --help example>'
+   ```
+   `{tmp}` in the sample becomes a temp folder, so output stays off the user's disk: `--sample '--text "Hi." --out {tmp}/hi.mp3'`.
+   It checks the README contract parses, `--help` exits 0, a call without `--caller` exits 2 with a JSON error and empty stdout, and the sample prints one JSON object and writes exactly one log line with the core fields. Every call runs with a stripped environment (the no-agent proof) and the log pointed at a temp file, so nothing reaches the real log. Read its JSON result; `"ok": false` names each failed check.
 
 If any check fails, fix it before moving on. Don't report success on an unverified migration.
 
@@ -211,6 +227,7 @@ Tell the user, concisely:
 - **State relocated:** old path → `<state_root>/<name>/`
 - **Prerequisite skills/MCPs:** anything referenced but not copied
 - **Verification:** static checks (Phase 3) + the end-to-end run (Phase 4) — what passed, what the test subagent flagged and you fixed, what was only smoke-tested
+- **Block (if it is one):** its consumers, the `check_block.py` result, and whether the sample call ran
 - **Not committed** unless they asked — leave staging to them
 
 ### Phase 6 — Deploy, then clean up
@@ -229,6 +246,7 @@ The migration is verified and reported. Now **deploy the skill** so it actually 
      python3 "$FRAMEWORK/deploy.py" --skill <name>             # do it
      ```
      `deploy.py` prompts before replacing any real (drifted) directory, so running it is safe; nothing destructive happens without a yes.
+- **A block's consumers.** For each caller found in Phase 1c, offer to repoint it at `uv run <skill_library_path>/<name>/scripts/run.py --caller <consumer> ...` (programs call the library path, not a runtime's skills dir), add the block to the consumer's `AGENTS.md` "Depends on" section, and run the consumer once. These are edits in other repos: list them and get a yes first.
 - **The original skill.** Once deployed, the source copy is redundant and will **double-load** if it sits in a dir the same runtime also reads. Lay out the options:
   - **Delete it** (recommended once deploy succeeds) — the verified library copy now loads via the link, so the original is a stale duplicate. Confirm before deleting.
   - **Leave it** — only if it's in a dir the runtime doesn't also load; otherwise it collides with the deployed link.
@@ -243,7 +261,8 @@ The migration is verified and reported. Now **deploy the skill** so it actually 
 - **Dependencies are isolated with `uv`** — PEP 723 inline deps + `uv run` for single-file scripts, a state-dir venv for projects. Never `pip install` into the global/system Python.
 - **Scripts self-locate** via `Path(__file__)` and read config from the skill root — they never assume a working directory.
 - **State** lives under `<state_root>/<name>/`, never inside the skill folder (keeps the folder a clean, shareable artifact) and never inside a random repo.
-- **Secrets** never appear in committed files or terminal output.
+- **Secrets** never appear in committed files or terminal output. A provider key several skills share lives once in `~/.config/<provider>/credentials.env`, and the skill's config holds its path.
+- **Blocks** — skills other programs call — follow `references/block-conventions.md`: one `scripts/run.py` contract, a required `--caller`, a shared call log at `~/.local/state/skills/_calls.jsonl` (or `$SKILLS_CALL_LOG`), and a `## Block contract` + `## Consumers` section in the README, which `deploy.py` turns into the library's Blocks catalogue.
 - **`.librarian` opt-out marker.** A skill deliberately kept out of the library carries a `.librarian` JSON file in its *source* folder recording that call, so the decision survives instead of being re-litigated every pass. Shape:
   ```json
   {
@@ -257,7 +276,7 @@ The migration is verified and reported. Now **deploy the skill** so it actually 
 
 ## Golden reference
 
-`references/case-study-daily-summary.md` walks through one full migration end to end — a skill with a vendored script, an extracted secret, and an extracted path — showing how the phases play out and what the finished folder looks like. Read it when you want a worked example to match. `references/migration-recipes.md` has the atomic before/after snippets for the common cases (dotenv→config, hardcoded path→config, state relocation, vendoring a Python CLI). `references/determinism-audit.md` is the Phase 1b companion: the compile pattern (mechanical steps → `scripts/`, judgment steps → toolless `claude -p` calls), the failure modes it eliminates, and two worked examples.
+`references/case-study-daily-summary.md` walks through one full migration end to end — a skill with a vendored script, an extracted secret, and an extracted path — showing how the phases play out and what the finished folder looks like. Read it when you want a worked example to match. `references/migration-recipes.md` has the atomic before/after snippets for the common cases (dotenv→config, hardcoded path→config, state relocation, vendoring a Python CLI). `references/block-conventions.md` is the rule set for block skills (Phase 1c, 2g, 3.4), with a worked example. `references/determinism-audit.md` is the Phase 1b companion: the compile pattern (mechanical steps → `scripts/`, judgment steps → toolless `claude -p` calls), the failure modes it eliminates, and two worked examples.
 
 ## Dogfooding
 

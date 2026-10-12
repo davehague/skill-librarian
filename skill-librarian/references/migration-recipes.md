@@ -89,3 +89,64 @@ SKILL_DIR="$DEST/$NAME"; uv run "$SKILL_DIR/scripts/<script>.py" <sample-args>
 git -C "$DEST" check-ignore "$NAME/config.json"      # must print the path
 git -C "$DEST" status --short "$NAME/"               # example tracked, config.json absent
 ```
+
+## 6. Block skill: run.py skeleton with the call log
+
+For a block (see `block-conventions.md`). The parts every block shares: JSON errors, exit codes 2 and 1, the required `--caller`, and one call-log line per call, failed calls included. Fill in `build_parser()` and `run()`; keep the rest as is.
+
+```python
+SKILL_NAME = "<name>"
+CALL_LOG = "~/.local/state/skills/_calls.jsonl"
+
+
+class BlockError(Exception):
+    """A failure the caller can act on. exit_status 2 = bad call, 1 = failed run."""
+
+    def __init__(self, code, message, exit_status=1):
+        super().__init__(message)
+        self.code, self.message, self.exit_status = code, message, exit_status
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):   # argparse would print usage and exit 2; answer in JSON instead
+        raise BlockError("bad_arguments", f"{message}. Run with --help for the full contract.", 2)
+
+
+def append_call_log(entry):
+    path = Path(os.environ.get("SKILLS_CALL_LOG") or CALL_LOG).expanduser()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as e:
+        # The work matters more than the log line; say so without failing the call.
+        print(json.dumps({"warning": f"could not write call log {path}: {e.strerror}"}), file=sys.stderr)
+
+
+def main(argv=None):
+    started = time.time()
+    entry = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+             "skill": SKILL_NAME, "caller": None, "exit_status": 0, "elapsed_ms": 0}
+    try:
+        args = build_parser().parse_args(argv)   # --help exits 0 here and logs nothing
+        entry["caller"] = args.caller
+        if not (args.caller or "").strip():
+            raise BlockError("no_caller", "--caller is required: name the project, skill or job "
+                             "making this call. It goes in the shared call log.", 2)
+        result = run(args, entry)                # run() may add provider, model, units, unit, cost
+        print(json.dumps({"ok": True, **result}, indent=2, ensure_ascii=False))
+    except BlockError as e:
+        entry.update(exit_status=e.exit_status, error=e.code)
+        print(json.dumps({"ok": False, "error": {"code": e.code, "message": e.message}}), file=sys.stderr)
+    except Exception as e:   # a bug in this script; still answer in JSON and still log the call
+        entry.update(exit_status=1, error="internal")
+        print(json.dumps({"ok": False, "error": {"code": "internal", "message": f"{type(e).__name__}: {e}"}}),
+              file=sys.stderr)
+    entry["elapsed_ms"] = int((time.time() - started) * 1000)
+    append_call_log(entry)
+    return entry["exit_status"]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
