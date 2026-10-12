@@ -54,8 +54,9 @@ Phase 6  Deploy & clean up    → link the new skill into the runtimes, then tid
 ### Phase 0 — Locate & guard
 
 1. Take the source skill folder the user points you at. Read its entry file (`SKILL.md`, or the runtime's equivalent) and settle on the skill's name — default to the folder name unless the manifest says otherwise.
-2. Check `<skill_library_path>/<name>/`. **If it already exists, stop and report back** — do not overwrite. Migrations are not idempotent (config.json may hold real secrets; the body may have local edits). Let the user decide how to reconcile.
-3. Confirm the destination name with the user if it's ambiguous.
+2. **Check for a `.librarian` opt-out marker in the source folder.** If it exists and declares `"status": "local-only"`, **stop and report its `reason` verbatim** — this skill was deliberately kept out of the library (its value is host- or runtime-specificity, so portability doesn't apply). Do not migrate, and do not re-run the audit to second-guess it. Proceed only on a **marker-aware override** — the user, *after you have shown them the marker's reason*, tells you to migrate anyway. A generic "yes, go ahead" given before they saw the marker does not count; surface the reason first, then let them decide. (See "Conventions" for the marker's shape and when to *write* one.)
+3. Check `<skill_library_path>/<name>/`. **If it already exists, stop and report back** — do not overwrite. Migrations are not idempotent (config.json may hold real secrets; the body may have local edits). Let the user decide how to reconcile.
+4. Confirm the destination name with the user if it's ambiguous.
 
 ### Phase 1 — Audit dependencies
 
@@ -104,6 +105,8 @@ The audit produces a picture; **don't start changing files until the human has s
 - **Open questions** — only the genuinely ambiguous ones that would change the plan. Don't ask about what you can sensibly default; do ask when the right call depends on how the user works.
 
 Then stop and let them confirm, adjust, or redirect — their answer can change what Phase 2 builds, which is the whole point of asking now instead of after. If the user has already told you to just proceed, state your plan in one pass and continue without waiting.
+
+**If the outcome is "leave it local" — record it, don't just walk away.** When the human decides this skill should *not* be migrated because its value is host- or runtime-specificity (hardcoded to one machine's layout, an OS-bound mechanism, a deliberately Claude-only tool), **write a `.librarian` marker into the source folder** capturing that decision and its reason (see "Conventions" for the shape). This turns a one-time "nah, keep it local" into a durable signal so Phase 0 of the next run skips it instead of re-proposing the same migration. Then stop — writing the marker is the whole deliverable in that case.
 
 ### Phase 2 — Migrate
 
@@ -241,6 +244,16 @@ The migration is verified and reported. Now **deploy the skill** so it actually 
 - **Scripts self-locate** via `Path(__file__)` and read config from the skill root — they never assume a working directory.
 - **State** lives under `<state_root>/<name>/`, never inside the skill folder (keeps the folder a clean, shareable artifact) and never inside a random repo.
 - **Secrets** never appear in committed files or terminal output.
+- **`.librarian` opt-out marker.** A skill deliberately kept out of the library carries a `.librarian` JSON file in its *source* folder recording that call, so the decision survives instead of being re-litigated every pass. Shape:
+  ```json
+  {
+    "status": "local-only",
+    "reason": "Why this skill stays where it is — the host/runtime-specificity that makes portability pointless.",
+    "date": "YYYY-MM-DD",
+    "decided_by": "who signed off"
+  }
+  ```
+  Phase 0 reads it and stops (reporting the `reason`); the Gate writes it when a human declines migration. `status: "local-only"` is the skip signal — the runtime ignores the file (it only loads the entry manifest), so it is inert to the skill itself and safe to commit if the folder is ever version-controlled.
 
 ## Golden reference
 
