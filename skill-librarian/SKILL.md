@@ -53,7 +53,7 @@ Phase 6  Deploy & clean up    → link the new skill into the runtimes, then tid
 
 ### Phase 0 — Locate & guard
 
-1. Take the source skill folder the user points you at. Read its entry file (`SKILL.md`, or the runtime's equivalent) and settle on the skill's name — default to the folder name unless the manifest says otherwise.
+1. Take the source skill folder the user points you at. Read its entry file (`SKILL.md`, or the runtime's equivalent) and settle on the skill's name — default to the folder name unless the manifest says otherwise. If the source is a repo of scripts rather than a skill (an existing tool that callers reach by path, being made into a block), the phases still apply with the changes in "Building a block from scripts that are not a skill" in `references/block-conventions.md`. Check then for an existing skill, synced ones included, that triggers on the same words.
 2. **Check for a `.librarian` opt-out marker in the source folder.** If it exists and declares `"status": "local-only"`, **stop and report its `reason` verbatim** — this skill was deliberately kept out of the library (its value is host- or runtime-specificity, so portability doesn't apply). Do not migrate, and do not re-run the audit to second-guess it. Proceed only on a **marker-aware override** — the user, *after you have shown them the marker's reason*, tells you to migrate anyway. A generic "yes, go ahead" given before they saw the marker does not count; surface the reason first, then let them decide. (See "Conventions" for the marker's shape and when to *write* one.)
 3. Check `<skill_library_path>/<name>/`. **If it already exists, stop and report back** — do not overwrite. Migrations are not idempotent (config.json may hold real secrets; the body may have local edits). Let the user decide how to reconcile.
 4. Confirm the destination name with the user if it's ambiguous.
@@ -173,7 +173,7 @@ Migrate existing token/state by **copy** if the original location is still used 
 
 A skill with no secrets, no hardcoded paths, no scripts, and no state is just `SKILL.md` — a one-file copy. Don't manufacture config files it doesn't need.
 
-**g. If it's a block,** build it to `references/block-conventions.md`: one `scripts/run.py` (recipe 6 in `migration-recipes.md` is the skeleton) with `--help` as the full contract, JSON out, JSON errors, exit 2 for a bad call and 1 for a failed run, a required `--caller`, one call-log line per call honouring `SKILLS_CALL_LOG`, and `<PREFIX>_<KEY>` environment variables. Move anything that needs another skill or judgment into `SKILL.md`. Give the `README.md` its `## Block contract` and `## Consumers` sections, listing every caller found in Phase 1c.
+**g. If it's a block,** build it to `references/block-conventions.md`: one `scripts/run.py` (recipe 6 in `migration-recipes.md` is the skeleton) with `--help` as the full contract, JSON out, JSON errors, exit 2 for a bad call and 1 for a failed run, a required `--caller`, one call-log line per call honouring `SKILLS_CALL_LOG`, and `<PREFIX>_<KEY>` environment variables. Move anything that needs another skill or judgment into `SKILL.md`. Give the `README.md` its `## Block contract` and `## Consumers` sections, listing every caller found in Phase 1c. A block's scripts are **ported** into that contract, not vendored as they are (step b); keep their behaviour, and leave any one caller's data (a channel table, an account id) with that caller.
 
 ### Phase 3 — Verify (do not skip)
 
@@ -276,7 +276,7 @@ The migration is verified and reported. Now **deploy the skill** so it actually 
 
 ## Golden reference
 
-`references/case-study-daily-summary.md` walks through one full migration end to end — a skill with a vendored script, an extracted secret, and an extracted path — showing how the phases play out and what the finished folder looks like. Read it when you want a worked example to match. `references/migration-recipes.md` has the atomic before/after snippets for the common cases (dotenv→config, hardcoded path→config, state relocation, vendoring a Python CLI). `references/block-conventions.md` is the rule set for block skills (Phase 1c, 2g, 3.4), with a worked example. `references/determinism-audit.md` is the Phase 1b companion: the compile pattern (mechanical steps → `scripts/`, judgment steps → toolless `claude -p` calls), the failure modes it eliminates, and two worked examples.
+`references/case-study-daily-summary.md` walks through one full migration end to end — a skill with a vendored script, an extracted secret, and an extracted path — showing how the phases play out and what the finished folder looks like. Read it when you want a worked example to match. `references/migration-recipes.md` has the atomic before/after snippets for the common cases (dotenv→config, hardcoded path→config, state relocation, vendoring a Python CLI). `references/block-conventions.md` is the rule set for block skills (Phase 1c, 2g, 3.4), including building a block from scripts that are not a skill, with two worked examples. `references/determinism-audit.md` is the Phase 1b companion: the compile pattern (mechanical steps → `scripts/`, judgment steps → toolless `claude -p` calls), the failure modes it eliminates, and two worked examples.
 
 ## Dogfooding
 

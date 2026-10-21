@@ -88,6 +88,19 @@ A library README with `<!-- blocks:start -->` / `<!-- blocks:end -->` gets a gen
 
 Everything between markers is generated and overwritten on deploy. Hand-kept sections (Services, Retired) go outside the markers.
 
+## Building a block from scripts that are not a skill
+
+Often the capability already exists as scripts in some repo (one script per host, a tool a job shells out to), and callers point at that repo by path. By the second-consumer rule it should be a block, even though there is no skill to migrate. The phases still apply, with five differences:
+
+1. **Phase 0: the source is the repo of scripts.** There is no `SKILL.md` to copy; you write one (the judgment steps only) and the README contract. Search the library, the runtimes' skill dirs and any account-synced skills for one that already does the job under a similar name. A near-duplicate that triggers on the same words ("download this video") must be retired once the block is deployed, or agents pick the wrong one. Say so at the gate.
+2. **Port, don't vendor.** Vendoring copies scripts as they are; a block needs one entry point with the fixed contract. Fold the scripts into `run.py` plus helper modules, for example one resolver function per host behind a router that picks by URL. Keep their behaviour; drop what the contract replaces: their own argument parsing, progress printed to stdout, `.env` loading, `sys.exit` inside library code.
+3. **Keep consumer data with the consumer.** If a script carries one caller's specifics (a channel table, an account id, a folder layout), take the generic parameter instead (a channel id, not a body name) and leave the table where that caller already keeps it. The block holds no per-consumer data.
+4. **Make a small real run possible.** If the job is long or large (a two-hour download, a thousand pages), give `run.py` a cap (`--max-seconds`, `--limit`) so verification, `check_block.py`'s sample and the fresh-agent test can be live without the full cost. Know where the cap does not apply and say so in the Limits.
+5. **Phase 6 retires a repo, not a skill folder.**
+   - Repoint every caller. Each is an edit in another repo, so list them and get a yes. Run the caller's tests, then one real call under the caller's own environment (a launchd job's short `PATH`, for example).
+   - Let it run before retiring the old code: for a nightly job, at least one good night, confirmed from its log and from the call log's lines with that caller.
+   - Then archive: a note at the top of the old README, the remote archived, the local copy moved to wherever the user keeps retired repos. Grep for the old path afterwards; only dated notes and the block's own provenance line should mention it.
+
 ## Verifying a block
 
 Phase 3 runs the bundled check:
@@ -107,7 +120,7 @@ Every call runs with a stripped environment (only `PATH`, `HOME`, `TMPDIR`, `USE
 
 Choose the sample from the `--help` examples. It must have no outside effect: a paid call of a few cents is fine; anything that sends or publishes runs with `--dry-run`. Without `--sample` the check reports the sample as not run, and the report to the user says so.
 
-## Worked example
+## Worked examples
 
 The first block built to these rules is a text-to-speech skill: text in, one MP3 and its exact duration out. Its shape:
 
@@ -116,3 +129,10 @@ The first block built to these rules is a text-to-speech skill: text in, one MP3
 - URLs handled in `SKILL.md`, which calls the web-to-markdown skill first and passes the file.
 - `SKILL.md` has a table of which steps are scripted and which are the agent's judgment (voice, delivery direction, splitting a script into segments).
 - The README carries the `## Block contract` and `## Consumers` sections, and `deploy.py` lists it in the Blocks catalogue.
+
+The second, a video-download skill, was built from scripts that were not a skill (the section above): a repo of six downloaders, one per host, that a nightly meetings job called by path. Its shape:
+
+- `scripts/run.py` (settings, naming, ffmpeg or yt-dlp, JSON, call log) and `scripts/resolvers.py` (one function per host, returning what to fetch; nothing in it downloads). `route()` picks by host: Fathom, BoxCast, private Vimeo, Skool, StreamYard, any `.m3u8`, and yt-dlp for everything else.
+- The old BoxCast script looked meetings up by a city body's name; the block takes a channel id and a date, and the channel table stayed in the meetings job.
+- Downloads go to a hidden part file beside the output and move into place, so a caller never sees half a file. `--dry-run` resolves without downloading; `--max-seconds` makes a ten-second live test of a two-hour meeting.
+- Phase 6 repointed the meetings job, waited for nine clean nights, archived the old repo, and retired an older generic downloader skill that triggered on the same words.
